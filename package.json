@@ -1,0 +1,39 @@
+{
+    "name": "npm-autoloader",
+    "version": "0.0.9",
+    "description": "Allows packages to specify modules to load on every run of npm.",
+    "author": "Danielle Church <dani.church@gmail.com>",
+    "license": "ISC",
+    "keywords": [
+        "onload-script",
+        "npm",
+        "onload",
+        "autoloader"
+    ],
+    "main": "dist/index.js",
+    "scripts": {
+        "build": "tsc",
+        "watch": "tsc --watch",
+        "prepare": "tsc"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/dmchurch/npm-autoloader.git"
+    },
+    "bugs": {
+        "url": "https://github.com/dmchurch/npm-autoloader/issues"
+    },
+    "homepage": "https://github.com/dmchurch/npm-autoloader#readme",
+    "dependencies": {
+        "yaml": "^1.6.0",
+        "npmlog": "^4.1.2"
+    },
+    "devDependencies": {
+        "typescript": "^3.6.3",
+        "@types/node": "^12.7.5",
+        "@types/yaml": "^1.0.2",
+        "@types/npmlog": "^4.1.2",
+        "@types/npm": "^2.0.30",
+        "package-yaml": "^1.0.0"
+    }
+}
