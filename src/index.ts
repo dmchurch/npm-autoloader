@@ -1,4 +1,4 @@
-/// <reference path="../types/npm.d.ts" />
+/// <reference path="../types/npmext.d.ts" />
 
 import yaml from 'yaml';
 import fs from 'fs';
@@ -83,8 +83,27 @@ function loadConfig(baseDir: string, cfgPrefix?: string): AutoloadEntry[] | null
     return null;
 }
 
+function cmdNoop(argv:string[], cb:(err?:any)=>void) {
+    cb();
+};
+
+cmdNoop.usage = "npm noop";
+cmdNoop.help = "noop: does nothing";
+
+function cmdAutoload(argv:string[], cb:(err?:any)=>void) {
+    log.info("autoload", "In autoload");
+    cb();
+}
+
 function autoload(npm: NPM.Static | null, projectDir: string | null, globalDir?: string):void {
     let alEntries:AutoloadEntry[] = [];
+    let npmOrigCommands:string[] = [];
+
+    if (npm) {
+        npmOrigCommands = Object.keys(npm.commands);
+        npm.commands["noop"] = cmdNoop;
+        npm.commands["autoload"] = cmdAutoload;
+    }
 
     if (projectDir) {
         alEntries = alEntries.concat(loadConfig(projectDir) || []);
@@ -125,6 +144,37 @@ function autoload(npm: NPM.Static | null, projectDir: string | null, globalDir?:
                 process.exit(1);
             } else {
                 log.warn("autoload:"+alEntry.basePath, ...errMsg);
+            }
+        }
+    }
+
+    if (npm) {
+        const cmdLists:Module[] = Object.entries(require.cache as {[path:string]:Module})
+                              .filter(([path,mod]) => (path.endsWith("npm/lib/config/cmd-list.js")))
+                              .map(([path,mod]) => (mod));
+        const newCmds = Object.keys(npm.commands).filter((c)=>(npmOrigCommands.indexOf(c) === -1));
+        for (let listMod of cmdLists) {
+            listMod.exports.cmdList.push(...newCmds);
+        }
+        npm.fullList.push(...newCmds);
+        if (npm.command == 'help' && newCmds.indexOf(npm.argv[0] || npm.argv[1]) !== -1) {
+            log.verbose("autoload", "extcmd handling for %s", npm.argv[0]);
+            // extension command!
+            if (npm.argv[0] === undefined) {
+                // npm extcommand or npm extcommand -h
+                if (process.argv.indexOf('-h') !== -1) {
+                    npm.argv.splice(0,1);
+                } else {
+                    npm.command = npm.argv[1];
+                    npm.argv.splice(0,2);
+                }
+            } else {
+                // npm help extcommand
+                const cmd = npm.commands[npm.argv[0]];
+                if (cmd.help) {
+                    cmd.usage = cmd.help;
+                    npm.config.sources.cli.data.usage = true;
+                }
             }
         }
     }
