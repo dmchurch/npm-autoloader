@@ -30,13 +30,14 @@
     },
     "dependencies": {
         "npmlog": "^4.1.2",
+        "@types/npm": "^2.0.30",
         "yaml": "^1.7.0"
     },
     "devDependencies": {
         "@types/node": "^12.7.8",
-        "@types/npm": "^2.0.30",
         "@types/npmlog": "^4.1.2",
         "@types/yaml": "^1.0.2",
+        "package-yaml": "^1.0.0",
         "typescript": "^3.6.3"
     }
 }
