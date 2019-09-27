@@ -3,10 +3,12 @@
         "outDir": "./dist",
         "target": "es2015",
         "module": "commonjs",
+        "declaration": true,
         "strict": true,
         "noImplicitAny": true,
         "alwaysStrict": true,
         "noUnusedLocals": true,
+        "noUnusedParameters": true,
         "esModuleInterop": true
     },
     "include": [

@@ -83,26 +83,65 @@ function loadConfig(baseDir: string, cfgPrefix?: string): AutoloadEntry[] | null
     return null;
 }
 
-function cmdNoop(argv:string[], cb:(err?:any)=>void) {
-    cb();
-};
+export abstract class NPMExtensionCommand extends Function implements NPM.CommandFunction {
 
-cmdNoop.usage = "npm noop";
-cmdNoop.help = "noop: does nothing";
+    readonly __self__:this;
+    usage?:string;
+    help?:string;
 
-function cmdAutoload(argv:string[], cb:(err?:any)=>void) {
-    log.info("autoload", "In autoload");
-    cb();
+    constructor(protected readonly npm:NPM.Static) {
+        super('...args', 'return this.__self__.__call__(...args)');
+        const self:this = this.bind(this);
+        this.__self__ = self;
+        (<any>self).npm = npm;
+        return self;
+    }
+
+    __call__(args:string[], cb:(err?:any)=>void):void {
+        let result;
+        try {
+            result = this.execute(args);
+        } catch (e) {
+            cb(e);
+            return;
+        }
+        cb(result);
+    }
+
+    abstract execute(args:string[]):any;
 }
+export interface NPMExtensionCommand {
+    (args:string[], cb:(err?:any)=>void):void;
+}
+
+class NoopCmd extends NPMExtensionCommand {
+    execute():any {}
+
+    usage = "npm noop\n(does nothing)";
+    help = "noop: does nothing";
+}
+
+class AutoloadCmd extends NPMExtensionCommand {
+    execute():any {
+        log.info("autoload", "In autoload");
+    }
+}
+
 
 function autoload(npm: NPM.Static | null, projectDir: string | null, globalDir?: string):void {
     let alEntries:AutoloadEntry[] = [];
     let npmOrigCommands:string[] = [];
+    let npmCommand:string = "";
 
     if (npm) {
         npmOrigCommands = Object.keys(npm.commands);
-        npm.commands["noop"] = cmdNoop;
-        npm.commands["autoload"] = cmdAutoload;
+        npm.commands["noop"] = new NoopCmd(npm);
+        npm.commands["autoload"] = new AutoloadCmd(npm);
+        if (npm.command == 'help' && typeof npm.argv[0] == "undefined" && npm.argv[1]) {
+            npmCommand = npm.argv[1];
+        } else {
+            npmCommand = npm.command;
+        }
     }
 
     if (projectDir) {
@@ -125,7 +164,7 @@ function autoload(npm: NPM.Static | null, projectDir: string | null, globalDir?:
                 alEntry.func = '_npm_autoload';
             }
             if (alEntry.func) {
-                importMod[alEntry.func](npm);
+                importMod[alEntry.func](npm, npmCommand);
             }
         } catch (e) {
             let errMsg:[string, ...string[]];
@@ -150,13 +189,15 @@ function autoload(npm: NPM.Static | null, projectDir: string | null, globalDir?:
 
     if (npm) {
         const cmdLists:Module[] = Object.entries(require.cache as {[path:string]:Module})
-                              .filter(([path,mod]) => (path.endsWith("npm/lib/config/cmd-list.js")))
-                              .map(([path,mod]) => (mod));
+                              .filter(([path,_]) => (path.endsWith("npm/lib/config/cmd-list.js")))
+                              .map(([_,mod]) => (mod));
         const newCmds = Object.keys(npm.commands).filter((c)=>(npmOrigCommands.indexOf(c) === -1));
         for (let listMod of cmdLists) {
             listMod.exports.cmdList.push(...newCmds);
         }
         npm.fullList.push(...newCmds);
+        const builtinDeref = npm.deref;
+        npm.deref = (command:string) => (newCmds.includes(command) ? command : builtinDeref(command));
         if (npm.command == 'help' && newCmds.indexOf(npm.argv[0] || npm.argv[1]) !== -1) {
             log.verbose("autoload", "extcmd handling for %s", npm.argv[0]);
             // extension command!
@@ -189,9 +230,35 @@ function onload(npm: NPM.Static):void {
     autoload(npm, npm.config.get("global") ? null : npm.config.localPrefix, globalDir);
 }
 
-if (module.parent && module.parent.id.endsWith('/npm.js') && !process.env.SKIP_NPM_AUTOLOADER) {
+export interface NPMModule extends NodeModule {
+    exports: NPM.Static;
+}
+export interface ModuleCalledFromNPM extends NodeModule {
+    parent: NPMModule;
+}
+export function calledFromNPM(module:NodeModule):module is ModuleCalledFromNPM {
+    return !!(module.parent && module.parent.id.endsWith('/npm.js'));
+}
+
+export function getNPM(module:ModuleCalledFromNPM):NPM.Static;
+export function getNPM(module:NodeModule):NPM.Static | null;
+export function getNPM(module:NodeModule):NPM.Static | null {
+    if (!calledFromNPM(module)) return null;
+    return module.parent.exports;
+}
+
+export function npmExit(code:number=0):never {
+    for (const listener of process.listeners('exit')) {
+        if (listener.toString().includes("cb() never called")) {
+            process.removeListener('exit', listener);
+        }
+    }
+    return process.exit(code);
+}
+
+if (calledFromNPM(module) && !process.env.SKIP_NPM_AUTOLOADER) {
     log.verbose("(load)", "Loaded from onload, running autoload");
-    onload(module.parent.exports);
+    onload(getNPM(module));
 } else {
     log.verbose("(load)", "Not loaded from onload, leaving");
 }
