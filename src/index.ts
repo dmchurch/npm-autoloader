@@ -132,6 +132,7 @@ function autoload(npm: NPM.Static | null, projectDir: string | null, globalDir?:
     let alEntries:AutoloadEntry[] = [];
     let npmOrigCommands:string[] = [];
     let npmCommand:string = "";
+    let initialInstall:boolean = false;
 
     if (npm) {
         npmOrigCommands = Object.keys(npm.commands);
@@ -140,7 +141,12 @@ function autoload(npm: NPM.Static | null, projectDir: string | null, globalDir?:
         if (npm.command == 'help' && typeof npm.argv[0] == "undefined" && npm.argv[1]) {
             npmCommand = npm.argv[1];
         } else {
-            npmCommand = npm.command;
+            npmCommand = npm.deref(npm.command) || npm.command;
+        }
+        log.verbose("autoload", "in npm with command %s, argv %j, tentative command: %s", npm.command, npm.argv, npmCommand);
+        initialInstall = !!(npmCommand == 'install' && npm.argv.length == 0 && projectDir && !fs.existsSync(path.join(projectDir,'node_modules')));
+        if (initialInstall) {
+            log.verbose("autoload", "Looks like an initial install, will ignore autoload failures");
         }
     }
 
@@ -177,10 +183,14 @@ function autoload(npm: NPM.Static | null, projectDir: string | null, globalDir?:
             } else {
                 errMsg = ["Unknown error handling autoload entry"];
             }
-            if (alEntry.required) {
+            if (initialInstall && path.dirname(alEntry.basePath) == projectDir) {
+                log.verbose("autoload:"+alEntry.basePath, ...errMsg);
+                log.verbose("autoload:"+alEntry.basePath, "Ignoring autoload failure on initial install");
+
+            } else if (alEntry.required) {
                 log.error("autoload:"+alEntry.basePath, ...errMsg);
                 log.error("autoload:"+alEntry.basePath, "Module %s is marked as required, bailing", alEntry.module);
-                process.exit(1);
+                npmExit(1);
             } else {
                 log.warn("autoload:"+alEntry.basePath, ...errMsg);
             }

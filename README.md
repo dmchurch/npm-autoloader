@@ -1,6 +1,6 @@
 # npm-autoloader
 
-This provides extensible autoloading scripts to customize `npm`'s behavior in the context of a given package ­– for example, to support alternative formats for the `package.json` file. This is a more flexible alternative to using `npm`'s `onload-script` configuration variable.
+This provides extensible autoloading scripts to customize `npm`'s behavior in the context of a given package – for example, to support alternative formats for the `package.json` file. This is a more flexible alternative to using `npm`'s `onload-script` configuration variable.
 
 ## Install
 
@@ -35,9 +35,11 @@ This file should contain a list of autoload entries in either short or long form
 : the name of a function to call in the module. It will be passed an instance of the `npm` object, which can be queried for things like the command name. If the module exports a function called `_npm_autoload`, it will be used as a default when this is not specified.
 
 **required** (boolean, optional)
-: whether this autoload entry must succeed for `npm` to be allowed to run. Use with caution! Setting a required entry that depends on an npm module being installed can prevent the use of `npm install` in the first place.
+: whether this autoload entry must succeed for `npm` to be allowed to run. Ignored during initial `npm install`.
 
 The short format is a string with the syntax `[+]module[:func]`, where the **required** option is represented by a leading `+`.
+
+During the initial `npm install` of a project (as determined by no existing `node_modules/` directory and an `npm install` command line with no additional non-option arguments), `npm-autoloader` will silence any load errors from that project's `npm-autoload.*` configuration file and will not abort if the module was required, to allow for the initial dependency installation.
 
 ### `npm-autoload.yaml` example
 
