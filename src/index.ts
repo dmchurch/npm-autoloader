@@ -131,7 +131,7 @@ class AutoloadCmd extends NPMExtensionCommand {
     }
 }
 
-export type AutoloadFunc = (npm: NPM.Static | null, npmCommand:string) => null;
+export type AutoloadFunc = (npm: NPM.Static | null, npmCommand:string) => void;
 
 const autoloadedModules = new Set<string>();
 const autoloadCalled = new Set<string>();
