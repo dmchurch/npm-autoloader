@@ -1,15 +1,19 @@
 /// <reference path="../types/npmext.d.ts" />
 
+const oldNpmlog = require.cache[require.resolve("npmlog")];
+
 import yaml from 'yaml';
 import fs from 'fs';
 import log from 'npmlog';
 import path from 'path';
 import Module from 'module';
-type RequireFunction = ((path:string) => any) & {
-    resolve: ((request:string, options?:{paths?: string[]}) => string) & {
-        paths(request:string): string[] | null;
-    };
-};
+import { EventEmitter } from 'events';
+import 'node-module-polyfill';
+
+delete require.cache[require.resolve("npmlog")];
+if (oldNpmlog) {
+    require.cache[require.resolve("npmlog")] = oldNpmlog;
+}
 
 type ALEX_T = [string, (str:string) => any];
 type AutoloadEntry = {
@@ -127,6 +131,18 @@ class AutoloadCmd extends NPMExtensionCommand {
     }
 }
 
+export type AutoloadFunc = (npm: NPM.Static | null, npmCommand:string) => null;
+
+const autoloadedModules = new Set<string>();
+const autoloadCalled = new Set<string>();
+
+function getNpmCommand(npm: NPM.Static):string {
+    if (npm.command == 'help' && typeof npm.argv[0] == "undefined" && npm.argv[1]) {
+        return npm.argv[1];
+    } else {
+        return npm.deref(npm.command) || npm.command;
+    }
+}
 
 function autoload(npm: NPM.Static | null, projectDir: string | null, globalDir?: string):void {
     let alEntries:AutoloadEntry[] = [];
@@ -138,11 +154,7 @@ function autoload(npm: NPM.Static | null, projectDir: string | null, globalDir?:
         npmOrigCommands = Object.keys(npm.commands);
         npm.commands["noop"] = new NoopCmd(npm);
         npm.commands["autoload"] = new AutoloadCmd(npm);
-        if (npm.command == 'help' && typeof npm.argv[0] == "undefined" && npm.argv[1]) {
-            npmCommand = npm.argv[1];
-        } else {
-            npmCommand = npm.deref(npm.command) || npm.command;
-        }
+        npmCommand = getNpmCommand(npm);
         log.verbose("autoload", "in npm with command %s, argv %j, tentative command: %s", npm.command, npm.argv, npmCommand);
         initialInstall = !!(npmCommand == 'install' && npm.argv.length == 0 && projectDir && !fs.existsSync(path.join(projectDir,'node_modules')));
         if (initialInstall) {
@@ -157,43 +169,72 @@ function autoload(npm: NPM.Static | null, projectDir: string | null, globalDir?:
         alEntries = alEntries.concat(loadConfig(globalDir) || []);
     }
 
-    for (let alEntry of alEntries) {
-        let requireFunc:RequireFunction = Module.createRequireFromPath(alEntry.basePath) as RequireFunction;
-        let requirePath:string|undefined;
-        let importMod:any;
-        let imported:boolean = false;
+    type MapFilterArray<T> = NonNullable<T>[] & {mapFilter: typeof mapFilter};
+    function mapFilter<T, U>(this:T[], cb:(value:T)=>U):MapFilterArray<U> {
+        const retval = this.map((x:any)=>{
+            try {
+                return cb(x);
+            } catch (e) {
+                doError(x.alEntry || x, e, "Unknown error handling autoload entry");
+                return null;
+            }
+        }).filter(x=>x!=null) as MapFilterArray<U>;
+        retval.mapFilter = mapFilter;
+        return retval;
+    }
+
+    (alEntries as MapFilterArray<AutoloadEntry>).mapFilter = mapFilter;
+
+    (alEntries as MapFilterArray<AutoloadEntry>).mapFilter(alEntry => {
+        let requireFunc:NodeRequire|null = Module.createRequire(alEntry.basePath);
+        let requirePath:string = "";
+
         try {
             requirePath = requireFunc.resolve(alEntry.module);
-            importMod = requireFunc(requirePath);
-            imported = true;
-            if (alEntry.func == null && '_npm_autoload' in importMod && typeof importMod._npm_autoload == 'function') {
-                alEntry.func = '_npm_autoload';
-            }
-            if (alEntry.func) {
-                importMod[alEntry.func](npm, npmCommand);
-            }
+            autoloadedModules.add(requirePath);
         } catch (e) {
-            let errMsg:[string, ...string[]];
-            if (requirePath === undefined) {
-                errMsg = ["Could not find module %s", alEntry.module];
-            } else if (!imported) {
-                errMsg = ["Error importing module %s", requirePath];
-            } else if (alEntry.func) {
-                errMsg = ["Error executing function %s in module %s", alEntry.func, requirePath];
-            } else {
-                errMsg = ["Unknown error handling autoload entry"];
+            doError(alEntry, e, "Could not find module %s", alEntry.module);
+            return null;
+        }
+        return {alEntry, requireFunc, requirePath};
+    }).mapFilter(({alEntry, requireFunc, requirePath}) => {
+        let importMod:any;
+        try {
+            importMod = requireFunc(requirePath);
+        } catch (e) {
+            doError(alEntry, e, "Error importing module %s", requirePath);
+            return null;
+        }
+        return {alEntry, requirePath, importMod};
+    }).mapFilter(({alEntry, requirePath, importMod})=>{
+        if (alEntry.func == null && !autoloadCalled.has(requirePath) && importMod != null &&
+            '_npm_autoload' in importMod && typeof importMod._npm_autoload == 'function') {
+            alEntry.func = '_npm_autoload';
+        }
+        if (alEntry.func) {
+            try {
+                importMod[alEntry.func](npm, npmCommand);
+            } catch (e) {
+                doError(alEntry, e, "Error executing function %s in module %s", alEntry.func, requirePath);
+                return null;
             }
-            if (initialInstall && path.dirname(alEntry.basePath) == projectDir) {
-                log.verbose("autoload:"+alEntry.basePath, ...errMsg);
-                log.verbose("autoload:"+alEntry.basePath, "Ignoring autoload failure on initial install");
+        }
+    });
 
-            } else if (alEntry.required) {
-                log.error("autoload:"+alEntry.basePath, ...errMsg);
-                log.error("autoload:"+alEntry.basePath, "Module %s is marked as required, bailing", alEntry.module);
-                npmExit(1);
-            } else {
-                log.warn("autoload:"+alEntry.basePath, ...errMsg);
-            }
+    function doError(alEntry:AutoloadEntry, error:any, errMsg:string, ...errArgs:any[]):void {
+        if (error) {
+            errMsg += " (%s)";
+            errArgs.push(error.message || error);
+        }
+        if (initialInstall && path.dirname(alEntry.basePath) == projectDir) {
+            log.verbose("autoload:"+alEntry.basePath, errMsg, ...errArgs);
+            log.verbose("autoload:"+alEntry.basePath, "Ignoring autoload failure on initial install");
+        } else if (alEntry.required) {
+            log.error("autoload:"+alEntry.basePath, errMsg, ...errArgs);
+            log.error("autoload:"+alEntry.basePath, "Module %s is marked as required, bailing", alEntry.module);
+            npmExit(1);
+        } else {
+            log.warn("autoload:"+alEntry.basePath, errMsg, ...errArgs);
         }
     }
 
@@ -246,8 +287,36 @@ export interface NPMModule extends NodeModule {
 export interface ModuleCalledFromNPM extends NodeModule {
     parent: NPMModule;
 }
+
+var npmModule:NPMModule|null = null;
+
+function getNPMModule():NPMModule {
+    if (npmModule) return npmModule;
+    for (const module of Object.values(require.cache as Record<string,NodeModule>).filter(m=>m.id.endsWith('/npm/lib/npm.js'))) {
+        if (module.exports instanceof EventEmitter && 'commands' in module.exports) {
+            npmModule = module as NPMModule;
+            return npmModule;
+        }
+    }
+    throw new Error("Could not find NPM module");
+}
+
+export function requireNPM(_?:undefined):NodeRequire;
+export function requireNPM(id:string):any;
+export function requireNPM(id?:string):any|NodeRequire {
+    const _require = Module.createRequire(getNPMModule().id);
+    if (typeof id === "undefined") {
+        return _require;
+    }
+    return _require(id);
+}
+
 export function calledFromNPM(module:NodeModule):module is ModuleCalledFromNPM {
-    return !!(module.parent && module.parent.id.endsWith('/npm.js'));
+    const wasCalledFromNPM:boolean = !!(module.parent && module.parent.id.endsWith('/npm.js'));
+    if (wasCalledFromNPM) {
+        npmModule = module.parent as NPMModule;
+    }
+    return wasCalledFromNPM;
 }
 
 export function getNPM(module:ModuleCalledFromNPM):NPM.Static;
@@ -264,6 +333,24 @@ export function npmExit(code:number=0):never {
         }
     }
     return process.exit(code);
+}
+
+export function doAutoload(module:NodeModule, autoloadFunc?:AutoloadFunc):boolean {
+    if (!autoloadFunc) {
+        autoloadFunc = module.exports._npm_autoload as AutoloadFunc;
+    }
+    if (calledFromNPM(module) || autoloadedModules.has(module.id)) {
+        let npm:NPM.Static;
+        try {
+            npm = getNPM(module) || getNPMModule().exports;
+        } catch (e) {
+            return false;
+        }
+        autoloadCalled.add(module.id);
+        autoloadFunc(npm, getNpmCommand(npm));
+        return true;
+    }
+    return false;
 }
 
 if (calledFromNPM(module) && !process.env.SKIP_NPM_AUTOLOADER) {

@@ -1,6 +1,6 @@
 {
     "name": "npm-autoloader",
-    "version": "1.0.1",
+    "version": "1.1.0",
     "description": "Allows packages to specify modules to load on every run of npm.",
     "author": "Danielle Church <dani.church@gmail.com>",
     "license": "ISC",
@@ -25,16 +25,14 @@
         "url": "https://github.com/dmchurch/npm-autoloader/issues"
     },
     "homepage": "https://github.com/dmchurch/npm-autoloader#readme",
-    "engines": {
-        "node": ">=10.12.0"
-    },
     "dependencies": {
+        "@types/npm": "^2.0.31",
+        "node-module-polyfill": "^1.0.1",
         "npmlog": "^4.1.2",
-        "@types/npm": "^2.0.30",
         "yaml": "^1.7.0"
     },
     "devDependencies": {
-        "@types/node": "^12.7.8",
+        "@types/node": "^12.7.11",
         "@types/npmlog": "^4.1.2",
         "@types/yaml": "^1.0.2",
         "package-yaml": "^1.0.0",
