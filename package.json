@@ -1,6 +1,6 @@
 {
     "name": "npm-autoloader",
-    "version": "1.1.1",
+    "version": "1.1.2",
     "description": "Allows packages to specify modules to load on every run of npm.",
     "author": "Danielle Church <dani.church@gmail.com>",
     "license": "ISC",

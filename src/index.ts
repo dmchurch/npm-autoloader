@@ -40,7 +40,7 @@ function loadConfig(baseDir: string, cfgPrefix?: string): AutoloadEntry[] | null
     // We're using synchronous calls here. I don't like it, but we
     // have to make sure that we get called before npm continues its work.
     if (!cfgPrefix) {
-        cfgPrefix = baseDir + "/";
+        cfgPrefix = baseDir + path.sep;
     }
     for (let [ext, parser] of AUTOLOAD_EXTENSIONS) {
         let cfgPath = cfgPrefix + AUTOLOAD_BASENAME + ext;
@@ -239,8 +239,9 @@ function autoload(npm: NPM.Static | null, projectDir: string | null, globalDir?:
     }
 
     if (npm) {
+        const cmdListPath = path.normalize("npm/lib/config/cmd-list.js");
         const cmdLists:Module[] = Object.entries(require.cache as {[path:string]:Module})
-                              .filter(([path,_]) => (path.endsWith("npm/lib/config/cmd-list.js")))
+                              .filter(([path,_]) => (path.endsWith(cmdListPath)))
                               .map(([_,mod]) => (mod));
         const newCmds = Object.keys(npm.commands).filter((c)=>(npmOrigCommands.indexOf(c) === -1));
         for (let listMod of cmdLists) {
@@ -292,7 +293,8 @@ var npmModule:NPMModule|null = null;
 
 function getNPMModule():NPMModule {
     if (npmModule) return npmModule;
-    for (const module of Object.values(require.cache as Record<string,NodeModule>).filter(m=>m.id.endsWith('/npm/lib/npm.js'))) {
+    const npmPath = path.normalize('/npm/lib/npm.js');
+    for (const module of Object.values(require.cache as Record<string,NodeModule>).filter(m=>m.id.endsWith(npmPath))) {
         if (module.exports instanceof EventEmitter && 'commands' in module.exports) {
             npmModule = module as NPMModule;
             return npmModule;
@@ -312,7 +314,8 @@ export function requireNPM(id?:string):any|NodeRequire {
 }
 
 export function calledFromNPM(module:NodeModule):module is ModuleCalledFromNPM {
-    const wasCalledFromNPM:boolean = !!(module.parent && module.parent.id.endsWith('/npm.js'));
+    const npmPath = path.normalize('/npm.js');
+    const wasCalledFromNPM:boolean = !!(module.parent && module.parent.id.endsWith(npmPath));
     if (wasCalledFromNPM) {
         npmModule = module.parent as NPMModule;
     }
